@@ -1,0 +1,205 @@
+#!/bin/bash
+# GitBanana -- git, with words that mean what they say.
+#
+#   see___     show me something
+#   make___    create something new
+#   change___  alter what a thing is
+#   move___    go somewhere
+#   send / get  push and pull
+#
+# Anything gb doesn't recognise is handed straight to git, so every git
+# command and flag still works:   gb rebase -i HEAD~3
+
+KNOWN="save localsave seechanges seediff seelog seeunpushed seebranch
+seebranches seeremote seeall get send undo park unpark makebranch
+makeremote makerepo movebranch changeremote publish"
+
+die() { printf 'gb: %s\n' "$1" >&2; exit 1; }
+
+need_repo() {
+    git rev-parse --git-dir >/dev/null 2>&1 ||
+        die "not in a project folder.
+    start one here with:  gb makerepo"
+}
+
+need_arg() {                       # need_arg "$value" "usage"
+    [ -n "$1" ] || die "that needs more.
+    try:  gb $2"
+}
+
+has_remote() { git remote get-url origin >/dev/null 2>&1; }
+
+case "$1" in
+
+    # ---- saving -------------------------------------------------------
+    save)
+        need_repo; need_arg "$2" 'save "what you changed"'
+        git add -A
+        git diff --cached --quiet && die "nothing has changed since your last save."
+        git commit -m "$2" || exit 1
+        if has_remote; then git push
+        else echo "saved here. not online yet -- put it up with:  gb publish <name>"; fi
+        ;;
+    localsave)
+        need_repo; need_arg "$2" 'localsave "what you changed"'
+        git add -A
+        git diff --cached --quiet && die "nothing has changed since your last save."
+        git commit -m "$2"
+        ;;
+
+    # ---- looking ------------------------------------------------------
+    seechanges)  need_repo; git status --short ;;
+    seediff)     need_repo; git diff ;;
+    seelog)      need_repo; git log --oneline -"${2:-20}" ;;
+    seebranch)   need_repo; git branch --show-current ;;
+    seebranches) need_repo; git branch -a ;;
+    seeremote)   need_repo; git remote -v ;;
+    seeunpushed)
+        need_repo
+        if git rev-parse '@{u}' >/dev/null 2>&1; then
+            git rev-list --count '@{u}..'
+        else
+            echo "0 (this branch isn't tracking anything yet -- gb send)"
+        fi
+        ;;
+    seeall)
+        find "$HOME/code" -maxdepth 4 -name .git -type d -print0 2>/dev/null |
+        while IFS= read -r -d '' d; do
+            r=${d%/.git}
+            n=$(git -C "$r" status --porcelain 2>/dev/null | wc -l)
+            u=$(git -C "$r" rev-list --count '@{u}..' 2>/dev/null || echo 0)
+            [ "$n" = 0 ] && [ "$u" = 0 ] && s="clean" || s="$n changed, $u unsent"
+            printf '  %-34s %s\n' "${r#$HOME/code/}" "$s"
+        done
+        ;;
+
+    # ---- moving work around -------------------------------------------
+    get)  need_repo; git pull --rebase ;;
+    send) need_repo
+          has_remote || die "this project isn't online yet.
+    put it up with:  gb publish <name>"
+          git push -u origin "$(git branch --show-current)" ;;
+    undo) need_repo
+          [ "$(git rev-list --count HEAD 2>/dev/null || echo 0)" -lt 1 ] &&
+              die "nothing to undo -- no saves yet."
+          echo "undoing: $(git log -1 --format='%s')"
+          git reset --soft HEAD~1
+          echo "undone. your changes are still here." ;;
+
+    # ---- parking half-done work ---------------------------------------
+    park)   need_repo
+            git diff --quiet && git diff --cached --quiet &&
+                die "nothing to park -- no changes right now."
+            git stash push -u -m "${2:-parked}" && echo "parked. get it back with:  gb unpark" ;;
+    unpark) need_repo
+            git stash list | grep -q . || die "nothing parked."
+            git stash pop ;;
+
+    # ---- branches ------------------------------------------------------
+    makebranch) need_repo; need_arg "$2" "makebranch <name>"; git switch -c "$2" ;;
+    movebranch) need_repo; need_arg "$2" "movebranch <name>"; git switch "$2" ;;
+
+    # ---- remotes -------------------------------------------------------
+    makeremote)
+        need_repo; need_arg "$2" "makeremote <url>"
+        has_remote && die "already has a remote: $(git remote get-url origin)
+    change it with:  gb changeremote <url>"
+        git remote add origin "$2" &&
+        git push -u origin "$(git branch --show-current)"
+        ;;
+    changeremote)
+        need_repo; need_arg "$2" "changeremote <url>"
+        git remote set-url origin "$2" && echo "now pointing at: $2"
+        ;;
+
+    # ---- starting and publishing ---------------------------------------
+    makerepo)
+        git rev-parse --git-dir >/dev/null 2>&1 &&
+            die "this is already a project."
+        git init -q
+        git add -A
+        if git diff --cached --quiet; then
+            echo "started. nothing to save yet -- add a file, then:  gb save \"first\""
+        else
+            git commit -q -m "first commit" && echo "started, and saved what was here."
+        fi
+        ;;
+    publish)
+        need_repo; need_arg "$2" "publish <name> [public]"
+        has_remote && die "already online at: $(git remote get-url origin)"
+        [ "$(git rev-list --count HEAD 2>/dev/null || echo 0)" -lt 1 ] &&
+            die "nothing saved yet. do this first:  gb save \"first\""
+        vis="${3:-private}"
+        case "$vis" in
+            public|private) ;;
+            *) die "say 'public' or 'private', not '$vis'." ;;
+        esac
+        gh repo create "$2" --"$vis" --source=. --remote=origin --push &&
+            echo "published ($vis)."
+        ;;
+
+    # ---- help ------------------------------------------------------------
+    --help|-h|help|"")
+cat <<'EOF'
+GitBanana -- git, with words that mean what they say.
+
+  see___      show me something
+  make___     create something new
+  change___   alter what a thing is
+  move___     go somewhere
+  send / get  push and pull
+
+Run  gb --commands  for the full list.
+Anything gb doesn't know is passed to git, so `gb rebase -i HEAD~3` works.
+EOF
+        ;;
+    --commands)
+cat <<'EOF'
+SAVING
+  save "msg"        save everything and send it online
+  localsave "msg"   save here only, don't send
+  undo              undo the last save, keep the changes
+  park [name]       put half-done work aside
+  unpark            bring it back
+
+LOOKING
+  seechanges        which files changed
+  seediff           what changed inside them
+  seelog [n]        recent saves (default 20)
+  seeunpushed       how many saves aren't online
+  seebranch         which branch am I on
+  seebranches       all branches
+  seeremote         where online this points
+  seeall            every project in ~/code at once
+
+MOVING
+  send              send saves online
+  get               bring down others' saves
+  makebranch <n>    start a new branch
+  movebranch <n>    switch to a branch
+
+SETTING UP
+  makerepo          start tracking this folder (local only)
+  publish <n> [public]   put it on GitHub (private by default)
+  makeremote <url>  point at an existing online copy
+  changeremote <url>  point somewhere else
+EOF
+        ;;
+
+    # ---- anything else --------------------------------------------------
+    *)
+        # A real git command? Hand it over, flags and all.
+        if git help "$1" >/dev/null 2>&1; then
+            git "$@"
+            exit $?
+        fi
+        # Not git either -- did they mean one of ours? Check both directions,
+        # so a typo that is longer than the real name still matches.
+        for c in $KNOWN; do
+            case "$c" in *"$1"*) die "no command '$1'. did you mean:  gb $c" ;; esac
+            case "$1" in *"$c"*) die "no command '$1'. did you mean:  gb $c" ;; esac
+        done
+        die "no command '$1', and git doesn't know it either.
+    see what there is with:  gb --commands"
+        ;;
+esac

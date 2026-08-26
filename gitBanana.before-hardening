@@ -1,0 +1,72 @@
+#!/bin/bash
+
+case "$1" in
+    save)
+        git add -A
+        git commit -m "$2" && git push
+        ;;
+    localsave)
+    	git add -A
+    	git commit -m "$2"
+    	;;
+    seechanges)
+        git status --short
+        ;;
+    seeunpushed)
+    	git rev-list --count @{u}..
+    	;;
+    get)
+    	git pull --rebase
+    	;;
+    undo)
+    	git reset --soft HEAD~1
+    	;;
+    seelog)
+    	git log --oneline -20
+    	;;
+    seediff) 
+    	git diff ;;
+    makebranch)
+    	git switch -c "$2"
+    	;;
+    seebranch)
+    	git branch --show-current
+    	;;
+    seebranches) git branch -a ;;
+    movebranch)
+    	git switch "$2"
+    	;;
+    seeremote)
+    	git remote -v
+    	;;
+    makeremote)
+    	git remote add origin "$2"
+    	git push -u origin "$(git branch --show-current)"
+    	;;
+    changeremote)
+    	git remote set-url origin "$2"
+    	;;
+    send)
+    	git push -u origin "$(git branch --show-current)"
+    	;;
+    makerepo)
+    	git init
+    	git add -A
+        git commit -m "first commit"
+        ;;
+    publish)
+    	gh repo create "$2" --"${3:-private}" --source=. --remote=origin --push
+    	;;
+    --help) 
+    	cat <<'EOF'
+    	run --commands for a detailed list of what each command does.
+	this is the very basics.
+    	      see___     show me something
+	      make___    create something new
+	      change___  alter what a thing is
+	      move___    go somewhere
+	      send / get push and pull"
+	      EOF
+    	;;
+    *) git "$@" ;;
+esac
